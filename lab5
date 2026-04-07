@@ -1,0 +1,296 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import integrate
+
+
+# підінтегральна функція описує зміну навантаження на сервер
+# 50 базове навантаження у відсотках
+# 20*sin(...) добовий цикл навантаження з піком о 18:00
+# 5*exp(...) гауссовий сплеск навантаження в полудень коли x=12
+def f(x):
+    return 50 + 20 * np.sin(np.pi * x / 12) + 5 * np.exp(-0.2 * (x - 12)**2)
+
+
+# межі інтегрування від 0 до 24 годин це повна доба
+a = 0
+b = 24
+
+
+# точне значення інтегралу обчислюємо через scipy щоб мати еталон для порівняння
+# quad повертає кортеж з двох значень тому беремо тільки перше через
+exact_value, _ = integrate.quad(f, a, b)
+print(f"точне значення інтегралу: {exact_value:.10f}")
+
+
+#складова формула сімпсона
+# n це кількість відрізків розбиття і вона має бути парною
+# формула має вигляд h/3 помножене на суму з вагами 1 4 2 4 2 ... 4 1
+def simpson(f, a, b, n):
+    # якщо n непарне робимо його парним додаванням одиниці
+    if n % 2 != 0:
+        n += 1
+    # крок інтегрування це довжина кожного елементарного відрізка
+    h = (b - a) / n
+    # рівновіддалені вузли від a до b включно всього n+1 вузлів
+    x = np.linspace(a, b, n + 1)
+    # значення функції у всіх вузлах
+    y = f(x)
+    # перший і останній вузли мають вагу 1
+    result = y[0] + y[-1]
+    # непарні індекси 1 3 5 ... мають вагу 4
+    result += 4 * np.sum(y[1:-1:2])
+    # парні індекси 2 4 6 ... крім крайніх мають вагу 2
+    result += 2 * np.sum(y[2:-2:2])
+    # множимо на h/3 згідно формули сімпсона
+    result *= h / 3
+    return result
+
+
+# крок 4 досліджуємо як точність залежить від кількості розбиттів n
+# будуємо графік похибки та знаходимо мінімальне n при якому точність краща за eps
+eps = 1e-4
+
+# масив значень n від 2 до 200 з кроком 2 тільки парні значення
+n_values = np.arange(2, 202, 2)
+
+# для кожного n рахуємо абсолютну похибку відносно точного значення
+errors = np.array([abs(simpson(f, a, b, n) - exact_value) for n in n_values])
+
+# знаходимо перший індекс де похибка стала менше eps
+indices_below = np.where(errors < eps)[0]
+n_min = n_values[indices_below[0]] if len(indices_below) > 0 else None
+error_at_nmin = abs(simpson(f, a, b, n_min) - exact_value) if n_min else None
+
+print(f"\nкрок 4:")
+print(f"мінімальне n при якому досягається точність {eps}: n_min = {n_min}")
+print(f"фактична похибка при n_min: {error_at_nmin:.2e}")
+
+# будуємо графік залежності похибки від числа розбиттів
+plt.figure(figsize=(10, 5))
+plt.semilogy(n_values, errors, label='похибка сімпсона', color='steelblue')
+# горизонтальна пунктирна лінія показує рівень заданої точності
+plt.axhline(y=eps, color='red', linestyle='--', label=f'ε = {eps}')
+if n_min:
+    # вертикальна лінія позначає де знаходиться n_min
+    plt.axvline(x=n_min, color='green', linestyle=':', label=f'n_min = {n_min}')
+plt.xlabel('кількість розбиттів n')
+plt.ylabel('похибка |I(n) - I_exact|')
+plt.title('залежність похибки формули сімпсона від числа розбиттів')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig('error_vs_n.png', dpi=120)
+plt.show()
+
+
+# крок 5 обчислюємо похибку при n1 яке менше n_min
+# беремо n1=8 щоб методи уточнення мали що покращувати і похибка була помітною
+n1 = 8
+
+# наближене значення інтегралу при n1
+I_n1 = simpson(f, a, b, n1)
+
+# абсолютна похибка відносно точного значення
+error_n1 = abs(I_n1 - exact_value)
+
+print(f"\nкрок 5:")
+print(f"n1 = {n1} (менше n_min = {n_min})")
+print(f"I(n1) = {I_n1:.10f}")
+print(f"похибка |I(n1) - I_exact| = {error_n1:.2e}")
+
+
+# крок 6 уточнення методом рунге-ромберга
+# рахуємо інтеграл з кроком h і кроком h/2 тобто для n1 і для 2*n1
+# потім за формулою отримуємо більш точне значення
+# формула I_runge = I(2n) + (I(2n) - I(n)) / (2^p - 1)
+# p=4 це порядок точності складової формули сімпсона
+n1_double = 2 * n1
+
+# значення інтегралу з подвоєним числом розбиттів
+I_n1_double = simpson(f, a, b, n1_double)
+
+# порядок точності складової формули сімпсона дорівнює 4
+p = 4
+
+# уточнене значення за рунге-ромбергом
+I_runge = I_n1_double + (I_n1_double - I_n1) / (2**p - 1)
+
+# похибка уточненого значення
+error_runge = abs(I_runge - exact_value)
+
+print(f"\nкрок 6 (рунге-ромберг):")
+print(f"I(n1) = {I_n1:.10f}")
+print(f"I(2*n1) = {I_n1_double:.10f}")
+print(f"I_runge = {I_runge:.10f}")
+print(f"похибка рунге-ромберг = {error_runge:.2e}")
+
+
+# крок 7 уточнення методом ейткена
+# цей метод не потребує знання порядку p і визначає його автоматично
+# рахуємо інтеграл при трьох різних кроках n1 і 2*n1 і 4*n1
+# порядок оцінюємо як log2((I1-I2)/(I2-I3))
+# уточнене значення I_aitken = I1 - (I1-I2)^2 / (I1 - 2*I2 + I3)
+n1_quad = 4 * n1
+
+# три наближення з різними кроками
+I1 = simpson(f, a, b, n1)         # крок h
+I2 = simpson(f, a, b, n1_double)  # крок h/2
+I3 = simpson(f, a, b, n1_quad)    # крок h/4
+
+# знаменник формули ейткена
+denom = I1 - 2 * I2 + I3
+
+# уточнене значення якщо знаменник не нульовий інакше беремо I2
+I_aitken = I1 - (I1 - I2)**2 / denom if abs(denom) > 1e-15 else I2
+
+# оцінка порядку точності через відношення різниць між наближеннями
+diff1 = I1 - I2
+diff2 = I2 - I3
+if abs(diff2) > 1e-15 and abs(diff1 / diff2) > 0:
+    p_estimated = np.log2(abs(diff1 / diff2))
+else:
+    p_estimated = float('nan')
+
+# похибка уточненого значення
+error_aitken = abs(I_aitken - exact_value)
+
+print(f"\nкрок 7 (ейткен):")
+print(f"I1 = I(n1) = {I1:.10f}")
+print(f"I2 = I(2*n1) = {I2:.10f}")
+print(f"I3 = I(4*n1) = {I3:.10f}")
+print(f"оцінка порядку точності p = {p_estimated:.4f}")
+print(f"I_aitken = {I_aitken:.10f}")
+print(f"похибка ейткен = {error_aitken:.2e}")
+
+
+# крок 8 порівняльна таблиця похибок усіх методів
+print(f"\nкрок 8 порівняння методів при n1={n1}:")
+print(f"{'метод':<30} {'значення':<18} {'похибка':<15}")
+print("-" * 63)
+print(f"{'точне значення':<30} {exact_value:<18.10f} {'-':<15}")
+print(f"{'сімпсон (n1)':<30} {I_n1:<18.10f} {error_n1:<15.2e}")
+print(f"{'рунге-ромберг':<30} {I_runge:<18.10f} {error_runge:<15.2e}")
+print(f"{'ейткен':<30} {I_aitken:<18.10f} {error_aitken:<15.2e}")
+
+
+# крок 9 адаптивний алгоритм на основі формули сімпсона
+# рекурсивно ділимо відрізок навпіл поки похибка на кожному підвідрізку не менша за задану
+# умова збіжності це |I_груба - I_точна| менше 15*eps_local
+# коефіцієнт 15 це 2^4 - 1 що відповідає оцінці рунге для порядку p=4
+def adaptive_simpson(f, a, b, eps, depth=0, max_depth=50):
+    # лічильник викликів зберігаємо у списку щоб він змінювався між рекурсивними викликами
+    return _adaptive_recursive(f, a, b, eps, depth, max_depth, [0])
+
+def _adaptive_recursive(f, a, b, eps, depth, max_depth, call_count):
+    # середина відрізка для поділу навпіл
+    mid = (a + b) / 2
+
+    # довжина поточного відрізка
+    h = b - a
+
+    # обчислюємо функцію у трьох точках для формули сімпсона на всьому відрізку
+    fa = f(a)
+    fmid = f(mid)
+    fb = f(b)
+    # груба оцінка інтегралу на всьому відрізку за формулою сімпсона
+    I_whole = (h / 6) * (fa + 4 * fmid + fb)
+    call_count[0] += 3
+
+    # сімпсон на лівій половині від a до mid
+    fq1 = f((a + mid) / 2)
+    I_left = (h / 12) * (fa + 4 * fq1 + fmid)
+    call_count[0] += 1
+
+    # сімпсон на правій половині від mid до b
+    fq2 = f((mid + b) / 2)
+    I_right = (h / 12) * (fmid + 4 * fq2 + fb)
+    call_count[0] += 1
+
+    # сума двох половин це більш точна оцінка ніж груба
+    I_split = I_left + I_right
+
+    # перевіряємо умову збіжності або досягнення максимальної глибини рекурсії
+    if abs(I_split - I_whole) <= 15 * eps or depth >= max_depth:
+        # повертаємо уточнене значення з поправкою рунге
+        return I_split + (I_split - I_whole) / 15, call_count[0]
+
+    # якщо умова не виконується рекурсивно уточнюємо ліву і праву половини окремо
+    I_l, calls_l = _adaptive_recursive(f, a, mid, eps / 2, depth + 1, max_depth, call_count)
+    I_r, calls_r = _adaptive_recursive(f, mid, b, eps / 2, depth + 1, max_depth, call_count)
+
+    return I_l + I_r, call_count[0]
+
+
+# для різних значень eps запускаємо адаптивний алгоритм і фіксуємо результат похибку і кількість викликів
+eps_values = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6]
+
+adaptive_results = []
+adaptive_errors = []
+adaptive_calls = []
+
+for eps_val in eps_values:
+    # запускаємо алгоритм з поточним eps
+    I_adapt, n_calls = adaptive_simpson(f, a, b, eps_val)
+    err = abs(I_adapt - exact_value)
+    adaptive_results.append(I_adapt)
+    adaptive_errors.append(err)
+    adaptive_calls.append(n_calls)
+    print(f"eps={eps_val:.0e}: I={I_adapt:.8f}, похибка={err:.2e}, викликів f={n_calls}")
+
+
+# будуємо два графіки поряд щоб показати точність і вартість адаптивного алгоритму
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+# лівий графік показує як похибка залежить від eps
+ax1.loglog(eps_values, adaptive_errors, 'o-', color='darkblue', label='фактична похибка')
+# пряма y=x для порівняння з ідеальною лінійною залежністю
+ax1.loglog(eps_values, eps_values, '--', color='gray', alpha=0.5, label='y = ε (ідеал)')
+ax1.set_xlabel('параметр ε')
+ax1.set_ylabel('похибка |I_adapt - I_exact|')
+ax1.set_title('точність адаптивного алгоритму')
+ax1.legend()
+ax1.grid(True)
+
+# правий графік показує скільки разів потрібно обчислити f залежно від eps
+ax2.semilogx(eps_values, adaptive_calls, 's-', color='darkorange', label='кількість викликів f')
+ax2.set_xlabel('параметр ε')
+ax2.set_ylabel('кількість обчислень f(x)')
+ax2.set_title('обчислювальна вартість адаптивного алгоритму')
+ax2.legend()
+ax2.grid(True)
+
+plt.tight_layout()
+plt.savefig('adaptive_analysis.png', dpi=120)
+plt.show()
+
+
+# графік підінтегральної функції навантаження на сервер протягом доби
+x_plot = np.linspace(a, b, 1000)
+y_plot = f(x_plot)
+
+plt.figure(figsize=(10, 6))
+plt.plot(x_plot, y_plot,
+         label=r'$f(x)=50+20\sin\left(\frac{\pi x}{12}\right)+5e^{-0.2(x-12)^2}$',
+         color='steelblue', linewidth=2)
+# заливка під кривою показує площу яка і є значенням інтегралу
+plt.fill_between(x_plot, y_plot, alpha=0.15, color='steelblue')
+plt.title('графік функції навантаження на сервер')
+plt.xlabel('час x (год)')
+plt.ylabel('навантаження f(x)')
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.savefig('function_plot.png', dpi=120)
+plt.show()
+
+
+# фінальний підсумок усіх результатів
+print(f"інтегрується f(x) = 50 + 20*sin(πx/12) + 5*exp(-0.2*(x-12)²)")
+print(f"відрізок [{a}, {b}]")
+print(f"точне значення: {exact_value:.10f}")
+print(f"n_min для ε={eps}: {n_min}")
+print(f"похибка сімпсон(n1={n1}):  {error_n1:.4e}")
+print(f"похибка рунге-ромберг:     {error_runge:.4e}")
+print(f"похибка ейткен:            {error_aitken:.4e}")
+print(f"порядок точності (ейткен): {p_estimated:.4f} (теоретичний: 4.0)")
+print(f"адаптивний ε=1e-6: похибка={adaptive_errors[-1]:.4e}, викликів={adaptive_calls[-1]}")
